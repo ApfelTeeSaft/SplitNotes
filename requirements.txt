@@ -1,0 +1,26 @@
+# Core requirements for SplitNotes
+# No external dependencies required for basic functionality
+# All required modules are part of Python standard library:
+# - tkinter (GUI)
+# - socket (network communication)
+# - threading (background connections)
+# - select (socket polling)
+# - os, sys, platform (system integration)
+
+# Build requirements (install only when building executables)
+
+# For Windows builds:
+# cx-Freeze>=6.14.0
+# py2exe>=0.12.0.1  # Alternative for Windows
+
+# For macOS builds:
+# py2app>=0.28.0
+
+# For Linux builds:
+# cx-Freeze>=6.14.0
+
+# Development requirements:
+# flake8>=4.0.0  # Code linting
+# black>=22.0.0  # Code formatting
+
+# Note: Uncomment the build requirements you need based on your target platform

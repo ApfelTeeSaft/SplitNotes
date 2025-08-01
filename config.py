@@ -1,4 +1,6 @@
 # CONFIG FILE WITH CONSTANTS
+import platform
+import os
 
 # Livesplit connection
 HOST = "localhost"
@@ -56,7 +58,7 @@ RUNNING_ALERT = "RUNNING"
 # Font for gui widgets
 GUI_FONT = ("arial", 12)
 
-# Files tht should be displayed and opened a notes
+# Files that should be displayed and opened as notes
 TEXT_FILES = [
 	("Text Files", ("*.txt", "*.log", "*.asc", "*.conf", "*.cfg")),
 	('All', '*')
@@ -98,12 +100,55 @@ SETTINGS_OPTIONS = {"FONT": "Font",
 					"NEW_LINE_SEPARATOR": "Newline as split separator",
 					"CUSTOM_SEPARATOR": "Custom split separator"}
 
-# Fonts that can be selected
-AVAILABLE_FONTS = ("arial",
-				   "courier new",
-				   "fixedsys",
-				   "ms sans serif",
-				   "ms serif",
-				   "system",
-				   "times new roman",
-				   "verdana")
+# Platform-specific fonts
+def get_available_fonts():
+	"""Returns available fonts based on the platform."""
+	system = platform.system()
+	
+	if system == "Darwin":  # macOS
+		return ("Arial",
+				"Courier New",
+				"Georgia",
+				"Helvetica",
+				"Monaco",
+				"Times New Roman",
+				"Verdana",
+				"SF Pro Display")
+	elif system == "Linux":
+		return ("Arial",
+				"Courier New",
+				"DejaVu Sans",
+				"Liberation Sans",
+				"Liberation Serif",
+				"Ubuntu",
+				"Times New Roman",
+				"Verdana")
+	else:  # Windows
+		return ("arial",
+				"courier new",
+				"fixedsys",
+				"ms sans serif",
+				"ms serif",
+				"system",
+				"times new roman",
+				"verdana")
+
+AVAILABLE_FONTS = get_available_fonts()
+
+# Platform-specific configurations
+PLATFORM = platform.system()
+IS_WINDOWS = PLATFORM == "Windows"
+IS_MACOS = PLATFORM == "Darwin"
+IS_LINUX = PLATFORM == "Linux"
+
+# Default font adjustments for different platforms
+if IS_MACOS:
+	GUI_FONT = ("SF Pro Display", 12)
+elif IS_LINUX:
+	GUI_FONT = ("Ubuntu", 12)
+
+# Application info for packaging
+APP_NAME = "SplitNotes"
+APP_VERSION = "1.0.0"
+APP_AUTHOR = "ApfelTeeSaft"
+APP_DESCRIPTION = "Software for syncing notes with LiveSplit using the LiveSplit server component."

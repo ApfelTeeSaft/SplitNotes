@@ -25,28 +25,38 @@ def get_note_lines(file_path):
 	"""
 
 	# check so file isn't too big
-	if path.getsize(file_path) > config.MAX_FILE_SIZE:
+	try:
+		if path.getsize(file_path) > config.MAX_FILE_SIZE:
+			return False
+	except:
 		return False
 
 	try:
-		notes_file = open(file_path, "r")
-	except:
+		# Try different encodings for cross-platform compatibility
+		encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']
+		notes_file = None
+		
+		for encoding in encodings:
+			try:
+				notes_file = open(file_path, "r", encoding=encoding)
+				break
+			except UnicodeDecodeError:
+				continue
+		
+		if notes_file is None:
+			return False
+			
+	except Exception:
 		return False
 
 	# read file line per line
 	f_lines = []
-	keep_reading = True
-	while keep_reading:
-
-		try:
-			cur_line = notes_file.readline()
-		except:
-			return False
-
-		if cur_line:
-			f_lines.append(cur_line)
-		else:
-			keep_reading = False
+	try:
+		with notes_file:
+			for line in notes_file:
+				f_lines.append(line)
+	except Exception:
+		return False
 
 	return f_lines
 
@@ -58,28 +68,25 @@ def decode_notes(note_lines, separator):
 	Returns the list containing the notes for every split. 
 	"""
 
-	#Check if newline is being used as separator
-
+	# Check if newline is being used as separator
 	if separator == config.NEWLINE_CONSTANT:
-		separator = "" # left after stripping newline
+		separator = ""  # left after stripping newline
 
 	def is_title(line):
 		if not line:
 			return False
-
-		return (line[0] == "[") and (line[-1] == "]")
+		stripped = line.strip()
+		return stripped.startswith("[") and stripped.endswith("]")
 
 	def is_separator(line):
-		return (line == separator)
+		return line.strip() == separator.strip()
 
 	def is_newline(s):
-		return (s == "\n")
+		return s.strip() == ""
 
 	def remove_new_line(line):
-		if (len(line) >= 1) and (is_newline(line[-1])):
-			return line[:-1]
-		else:
-			return line
+		# Remove trailing newline characters
+		return line.rstrip('\n\r')
 
 	note_list = []
 	cur_notes = ""
@@ -87,16 +94,25 @@ def decode_notes(note_lines, separator):
 	for line in note_lines:
 		line = remove_new_line(line)
 
-		if is_separator(line):
-			if cur_notes:
-				note_list.append(cur_notes)
+		if separator == "" and is_newline(line):
+			# Using newline as separator
+			if cur_notes.strip():
+				note_list.append(cur_notes.strip())
+				cur_notes = ""
+		elif separator != "" and is_separator(line):
+			# Using custom separator
+			if cur_notes.strip():
+				note_list.append(cur_notes.strip())
 				cur_notes = ""
 		else:
 			if not is_title(line):
-				cur_notes += line + "\n"  # newline
+				if cur_notes:
+					cur_notes += "\n"
+				cur_notes += line
 
-	if cur_notes:
-		note_list.append(cur_notes)
+	# Add the last notes if any
+	if cur_notes.strip():
+		note_list.append(cur_notes.strip())
 
 	return note_list
 
@@ -104,10 +120,13 @@ def decode_notes(note_lines, separator):
 def get_notes(file_path, separator):
 	"""
 	Takes a path to a file and returns a list with the notes 
-	in the file encoded according to the note fromatting.
+	in the file encoded according to the note formatting.
 	
 	Returns False if file is empty.
 	"""
+	if not file_exists(file_path):
+		return False
+		
 	note_lines = get_note_lines(file_path)
 
 	if not note_lines:
@@ -115,7 +134,7 @@ def get_notes(file_path, separator):
 
 	note_list = decode_notes(note_lines, separator)
 
-	return note_list
+	return note_list if note_list else False
 
 
 def select_file():
@@ -124,15 +143,23 @@ def select_file():
 	Returns False upon no file selection.
 	Otherwise returns absolute path to selected file.
 	"""
+	try:
+		file = file_dia.askopenfilename(
+			title="Select Notes File",
+			filetypes=config.TEXT_FILES
+		)
 
-	file = file_dia.askopenfilename(filetypes=config.TEXT_FILES)
-
-	if file:
-		return file
-	else:
+		if file:
+			return file
+		else:
+			return False
+	except Exception:
 		return False
 
 
 def file_exists(file):
 	"""Checks if given path leads to an existing file."""
-	return path.isfile(file)
+	try:
+		return path.isfile(file)
+	except:
+		return False

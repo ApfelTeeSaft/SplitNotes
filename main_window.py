@@ -3,6 +3,7 @@ from tkinter import messagebox
 
 import os
 import sys
+import platform
 
 import config
 import ls_connection as con
@@ -22,18 +23,28 @@ runtime_info = {
 
 root = tkinter.Tk()
 
-red_path = os.path.join(
-	str(os.path.dirname(os.path.realpath(sys.argv[0]))),
-	config.RESOURCE_FOLDER,
-	config.ICONS["RED"]
-)
-green_path = os.path.join(
-	str(os.path.dirname(os.path.realpath(sys.argv[0]))),
-	config.RESOURCE_FOLDER,
-	config.ICONS["GREEN"]
-)
-red_icon = tkinter.Image("photo", file=red_path)
-green_icon = tkinter.Image("photo", file=green_path)
+# Cross-platform path handling
+if getattr(sys, 'frozen', False):
+	# Running as compiled executable
+	application_path = os.path.dirname(sys.executable)
+else:
+	# Running as script
+	application_path = os.path.dirname(os.path.realpath(__file__))
+
+red_path = os.path.join(application_path, config.RESOURCE_FOLDER, config.ICONS["RED"])
+green_path = os.path.join(application_path, config.RESOURCE_FOLDER, config.ICONS["GREEN"])
+
+# Initialize icons
+red_icon = None
+green_icon = None
+
+try:
+	if os.path.exists(red_path):
+		red_icon = tkinter.PhotoImage(file=red_path)
+	if os.path.exists(green_path):
+		green_icon = tkinter.PhotoImage(file=green_path)
+except Exception as e:
+	print(f"Warning: Could not load icons: {e}")
 
 
 def update(window, com_socket, text1, text2):
@@ -60,7 +71,7 @@ def update(window, com_socket, text1, text2):
 				# Connection error
 				com_socket = test_connection(com_socket, window, text1, text2)
 			else:
-				# index retrieved succesfully
+				# index retrieved successfully
 				if new_index == -1:
 					# timer not running
 					if runtime_info["timer_running"]:
@@ -158,10 +169,13 @@ def server_found(window):
 
 def update_icon(active, window):
 	"""Updates icon of window depending on "active" variable"""
-	if active:
-		window.tk.call('wm', 'iconphoto', window._w, green_icon)
-	else:
-		window.tk.call('wm', 'iconphoto', window._w, red_icon)
+	try:
+		if active and green_icon:
+			window.iconphoto(False, green_icon)
+		elif not active and red_icon:
+			window.iconphoto(False, red_icon)
+	except Exception:
+		pass  # Icon update failed, continue without icon
 
 
 def update_title(name, window):
@@ -205,7 +219,10 @@ def set_single_layout(window, box1, box2):
 
 def show_popup(event, menu):
 	"""Displays given popup menu at cursor position."""
-	menu.post(event.x_root, event.y_root)
+	try:
+		menu.post(event.x_root, event.y_root)
+	except Exception:
+		pass
 
 
 def menu_load_notes(window, text1, text2, com_socket):
@@ -248,10 +265,13 @@ def show_info(info, warning=False):
 	Displays an info popup window.
 	if warning is True window has a warning triangle.
 	"""
-	if warning:
-		messagebox.showwarning(info[0], info[1])
-	else:
-		messagebox.showinfo(info[0], info[1])
+	try:
+		if warning:
+			messagebox.showwarning(info[0], info[1])
+		else:
+			messagebox.showinfo(info[0], info[1])
+	except Exception:
+		print(f"Info: {info[1]}")
 
 
 def update_notes(text1, text2, index):
@@ -277,7 +297,7 @@ def update_notes(text1, text2, index):
 	if index <= max_index:
 		text1.insert(tkinter.END, runtime_info["notes"][index])
 
-		# cant disply notes for index+1
+		# can't display notes for index+1
 		if index < max_index:
 			text2.insert(tkinter.END, runtime_info["notes"][index + 1])
 
@@ -297,7 +317,7 @@ def left_arrow(window, com_socket, text1, text2):
 
 def change_preview(window, com_socket, text1, text2, move):
 	"""
-	Chnges notes that are currently displayed.
+	Changes notes that are currently displayed.
 	Move is either 1 for next or -1 for previous.
 	"""
 	if runtime_info["notes"] and (not runtime_info["timer_running"]):
@@ -311,6 +331,8 @@ def change_preview(window, com_socket, text1, text2, move):
 
 		if index > max_index:
 			index = max_index
+		elif index < 0:
+			index = 0
 
 		runtime_info["active_split"] = index
 
@@ -340,10 +362,10 @@ def menu_open_settings(root_wnd, box1, box2, text1, text2, com_socket):
 	Opens the settings menu.
 	"""
 	setting_handler.edit_settings(root_wnd,
-								  (lambda settings: apply_settings(settings,
+								  lambda settings: apply_settings(settings,
 																   root_wnd,
 																   box1, box2,
-																   text1, text2, com_socket)))
+																   text1, text2, com_socket))
 
 
 def apply_settings(settings, window, box1, box2, text1, text2, com_socket):
@@ -376,26 +398,26 @@ def apply_settings(settings, window, box1, box2, text1, text2, com_socket):
 		new_notes = noter.get_notes(settings["notes"], settings["separator"])
 
 		if new_notes:
-				# Notes loaded correctly
-				runtime_info["notes"] = new_notes
+			# Notes loaded correctly
+			runtime_info["notes"] = new_notes
 
-				new_note_length = len(new_notes)
+			new_note_length = len(new_notes)
 
-				if not (new_note_length == old_note_length):
-					show_info(("Notes Loaded",
-							   ("Loaded notes with " + str(new_note_length) + " splits.")))
+			if not (new_note_length == old_note_length):
+				show_info(("Notes Loaded",
+						   ("Loaded notes with " + str(new_note_length) + " splits.")))
 
-					if not runtime_info["timer_running"]:
-						runtime_info["active_split"] = -1
+				if not runtime_info["timer_running"]:
+					runtime_info["active_split"] = -1
 
-				update_GUI(window, com_socket, text1, text2)
+			update_GUI(window, com_socket, text1, text2)
 		else:
 			show_info(config.ERRORS["NOTES_EMPTY"], True)
 
 
 def save_geometry_settings(width, height):
 	"""
-	Saves given width and height to settigns file.
+	Saves given width and height to settings file.
 	"""
 	settings = setting_handler.load_settings()
 	settings["width"] = str(width)
@@ -409,7 +431,10 @@ def do_on_close(root_wnd):
 	Saves root_wnd's width and height to the settings file and
 	then closes the window.
 	"""
-	save_geometry_settings(root_wnd.winfo_width(), root_wnd.winfo_height())
+	try:
+		save_geometry_settings(root_wnd.winfo_width(), root_wnd.winfo_height())
+	except:
+		pass
 	root_wnd.destroy()
 
 
@@ -426,6 +451,9 @@ def init_UI(root):
 
 	# Graphical components
 	root.geometry(settings["width"] + "x" + settings["height"])
+
+	# Set minimum window size
+	root.minsize(300, 200)
 
 	box1 = tkinter.Frame(root)
 	box2 = tkinter.Frame(root)
@@ -475,20 +503,18 @@ def init_UI(root):
 	popup = tkinter.Menu(root, tearoff=0)
 	popup.add_command(
 		label=config.MENU_OPTIONS["LOAD"],
-		command=(lambda: menu_load_notes(root, text1, text2, com_socket))
+		command=lambda: menu_load_notes(root, text1, text2, com_socket)
 	)
 	popup.add_command(
 		label=config.MENU_OPTIONS["SETTINGS"],
-		command=(lambda: menu_open_settings(root, box1, box2, text1, text2, com_socket))
+		command=lambda: menu_open_settings(root, box1, box2, text1, text2, com_socket)
 	)
 
 	# Set default window icon and title
-	root.tk.call('wm', 'iconphoto', root._w, red_icon)
+	update_icon(False, root)
 	update_title(config.DEFAULT_WINDOW["TITLE"], root)
 
 	# Check if notes can be loaded from settings
-	settings = setting_handler.load_settings()
-
 	if settings["notes"] and noter.file_exists(settings["notes"]):
 		notes = noter.get_notes(settings["notes"], settings["separator"])
 
@@ -497,19 +523,56 @@ def init_UI(root):
 			update_GUI(root, com_socket, text1, text2)
 
 	# Event binds
-	root.bind("<Configure>", (lambda e: adjust_content(root, box1, box2)))
-	root.bind("<Button-3>", (lambda e: show_popup(e, popup)))
-	root.bind("<Right>", (lambda e: right_arrow(root, com_socket, text1, text2)))
-	root.bind("<Left>", (lambda e: left_arrow(root, com_socket, text1, text2)))
+	root.bind("<Configure>", lambda e: adjust_content(root, box1, box2) if e.widget == root else None)
+	
+	# Platform-specific right-click handling
+	if config.IS_MACOS:
+		root.bind("<Button-2>", lambda e: show_popup(e, popup))
+		root.bind("<Control-Button-1>", lambda e: show_popup(e, popup))
+	else:
+		root.bind("<Button-3>", lambda e: show_popup(e, popup))
+	
+	root.bind("<Right>", lambda e: right_arrow(root, com_socket, text1, text2))
+	root.bind("<Left>", lambda e: left_arrow(root, com_socket, text1, text2))
 
 	# Window close bind
-	root.protocol("WM_DELETE_WINDOW", (lambda: do_on_close(root)))
+	root.protocol("WM_DELETE_WINDOW", lambda: do_on_close(root))
 
 	# call update loop
 	update(root, com_socket, text1, text2)
 
-	root.geometry(settings["width"] + "x" + settings["height"])
 
-init_UI(root)
+def main():
+	"""Main entry point for the application."""
+	try:
+		# Set up the main window
+		root.title(config.DEFAULT_WINDOW["TITLE"])
+		
+		# Platform-specific optimizations
+		if config.IS_MACOS:
+			# Use native look on macOS
+			try:
+				root.tk.call('tk', 'scaling', 1.0)
+			except:
+				pass
+		
+		# Initialize UI
+		init_UI(root)
+		
+		# Start the main loop
+		root.mainloop()
+		
+	except KeyboardInterrupt:
+		print("\nApplication interrupted by user")
+	except Exception as e:
+		print(f"An error occurred: {e}")
+		messagebox.showerror("Error", f"An unexpected error occurred:\n{e}")
+	finally:
+		try:
+			root.destroy()
+		except:
+			pass
 
-root.mainloop()
+
+if __name__ == "__main__":
+	main()

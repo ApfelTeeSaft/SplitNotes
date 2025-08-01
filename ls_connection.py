@@ -11,6 +11,7 @@ import select  # used for checking if socket has data pending
 def ls_connect(ls_socket, call_func, window, server_port):
 	"""Connects given socket to the livesplit server."""
 	con_thread = Thread(target=try_connection, args=(ls_socket, call_func, window, server_port))
+	con_thread.daemon = True  # Make thread daemon so it doesn't prevent app exit
 	con_thread.start()
 
 
@@ -36,7 +37,10 @@ def try_connection(ls_socket, call_func, window, server_port):
 
 def close_socket(com_socket):
 	"""Closes given socket."""
-	com_socket.close()
+	try:
+		com_socket.close()
+	except:
+		pass  # Socket might already be closed
 
 
 def check_connection(ls_socket):
@@ -56,7 +60,7 @@ def send_to_ls(ls_socket, command):
 	Sends given command to ls using given socket.
 	If connected is False, tries to send without socket being connected to ls.
 	Returns the response, or False if an error occurs.
-	Check config.LS_COMMANDS for avaiable commands.
+	Check config.LS_COMMANDS for available commands.
 	"""
 
 	try:
@@ -64,13 +68,17 @@ def send_to_ls(ls_socket, command):
 	except:
 		return False
 
-	socket_ready = select.select([ls_socket], [], [], config.COM_TIMEOUT)
-	if socket_ready[0]:
-		try:
-			return (ls_socket.recv(1000)).decode("utf-8")
-		except:
+	# Use select to check if data is available, with timeout
+	try:
+		socket_ready = select.select([ls_socket], [], [], config.COM_TIMEOUT)
+		if socket_ready[0]:
+			try:
+				return (ls_socket.recv(1000)).decode("utf-8")
+			except:
+				return False
+		else:
 			return False
-	else:
+	except:
 		return False
 
 
@@ -85,7 +93,10 @@ def get_split_index(ls_socket):
 	ls_data = send_to_ls(ls_socket, "cur_split_index")
 
 	if not isinstance(ls_data, bool):
-		return int(ls_data)
+		try:
+			return int(ls_data.strip())
+		except:
+			return False
 	else:
 		return False
 
@@ -98,6 +109,6 @@ def get_split_name(ls_socket):
 	ls_data = send_to_ls(ls_socket, "cur_split_name")
 
 	if ls_data:
-		return ls_data
+		return ls_data.strip()
 	else:
 		return False

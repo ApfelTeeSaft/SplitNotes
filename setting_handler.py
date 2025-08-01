@@ -6,14 +6,22 @@ import sys
 
 import config
 
+# Cross-platform path handling
+if getattr(sys, 'frozen', False):
+	# Running as compiled executable
+	application_path = os.path.dirname(sys.executable)
+else:
+	# Running as script
+	application_path = os.path.dirname(os.path.realpath(__file__))
+
 settings_path = os.path.join(
-	str(os.path.dirname(os.path.realpath(sys.argv[0]))),
+	application_path,
 	config.RESOURCE_FOLDER,
 	config.SETTINGS_FILE
 )
 
 settings_icon_path = os.path.join(
-	str(os.path.dirname(os.path.realpath(sys.argv[0]))),
+	application_path,
 	config.RESOURCE_FOLDER,
 	config.ICONS["SETTINGS"]
 )
@@ -27,10 +35,14 @@ def load_settings():
 	returns a dictionary with all settings.
 	"""
 
+	# Ensure resources directory exists
+	os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+
 	# try to open default settings file
 	try:
-		settings_file = open(settings_path, "r+")
-		settings_content = get_file_lines(settings_file)
+		with open(settings_path, "r", encoding='utf-8') as settings_file:
+			settings_content = settings_file.readlines()
+			settings_content = [line.strip() for line in settings_content]
 	except:
 		# File not found
 		settings_content = set_default_settings()
@@ -65,32 +77,15 @@ def format_settings(file_rows):
 	settings = {}
 
 	for row in file_rows:
-		row = row.strip("\n")
-		parts = row.split("=", 1)
+		row = row.strip()
+		if '=' in row:
+			parts = row.split("=", 1)
 
-		if len(parts) == SETTING_PART_LENGTH:
-			# Strip to remove whitespace at end and beginning
-			settings[parts[0].strip()] = parts[1].strip()
+			if len(parts) == SETTING_PART_LENGTH:
+				# Strip to remove whitespace at end and beginning
+				settings[parts[0].strip()] = parts[1].strip()
 
 	return settings
-
-
-def get_file_lines(file):
-	"""
-	Returns a list containing all the lines of the gicen file.
-	"""
-	# read file line per line
-	f_lines = []
-	keep_reading = True
-	while keep_reading:
-		cur_line = file.readline()
-
-		if cur_line:
-			f_lines.append(cur_line)
-		else:
-			keep_reading = False
-
-	return f_lines
 
 
 def validate_settings(settings):
@@ -99,7 +94,7 @@ def validate_settings(settings):
 	"""
 
 	for req_setting in config.REQUIRED_SETTINGS:
-		if not (req_setting in settings):
+		if req_setting not in settings:
 			return False
 
 	if not validate_font_size(settings["font_size"]):
@@ -114,11 +109,10 @@ def validate_settings(settings):
 	if not validate_color(settings["background_color"]):
 		return False
 
-	if not (settings["font"] in config.AVAILABLE_FONTS):
+	if settings["font"] not in config.AVAILABLE_FONTS:
 		return False
 
-	if not ((settings["double_layout"] == "True") or
-				(settings["double_layout"] == "False")):
+	if settings["double_layout"] not in ["True", "False"]:
 		return False
 
 	if not validate_pixels(settings["width"]):
@@ -137,9 +131,14 @@ def set_settings_file_content(content):
 	"""
 	Saves given content to the config file, config.cfg, in the resources directory.
 	"""
-	settings_file = open(settings_path, "w")
-	settings_file.write(content)
-	settings_file.close()
+	# Ensure directory exists
+	os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+	
+	try:
+		with open(settings_path, "w", encoding='utf-8') as settings_file:
+			settings_file.write(content)
+	except Exception as e:
+		print(f"Error saving settings: {e}")
 
 
 def edit_settings(root_wnd, apply_method):
@@ -152,12 +151,27 @@ def edit_settings(root_wnd, apply_method):
 									width=config.SETTINGS_WINDOW["WIDTH"],
 									height=config.SETTINGS_WINDOW["HEIGHT"])
 	settings_wnd.title(config.SETTINGS_WINDOW["TITLE"])
-	settings_icon = tkinter.Image("photo", file=settings_icon_path)
-	settings_wnd.tk.call('wm', 'iconphoto', settings_wnd._w, settings_icon)
+	
+	# Try to load settings icon
+	try:
+		if os.path.exists(settings_icon_path):
+			settings_icon = tkinter.PhotoImage(file=settings_icon_path)
+			settings_wnd.iconphoto(False, settings_icon)
+	except:
+		pass  # Icon loading failed, continue without icon
 
 	settings = load_settings()
 
 	settings_wnd.resizable(0, 0)
+	settings_wnd.transient(root_wnd)  # Make it a dialog
+	settings_wnd.grab_set()  # Make it modal
+
+	# Center the window
+	settings_wnd.geometry(f"{config.SETTINGS_WINDOW['WIDTH']}x{config.SETTINGS_WINDOW['HEIGHT']}")
+	settings_wnd.update_idletasks()
+	x = (settings_wnd.winfo_screenwidth() // 2) - (config.SETTINGS_WINDOW['WIDTH'] // 2)
+	y = (settings_wnd.winfo_screenheight() // 2) - (config.SETTINGS_WINDOW['HEIGHT'] // 2)
+	settings_wnd.geometry(f"+{x}+{y}")
 
 	font_label = tkinter.Label(settings_wnd,
 							   text=config.SETTINGS_OPTIONS["FONT"],
@@ -197,26 +211,24 @@ def edit_settings(root_wnd, apply_method):
 	font_dropdown.configure(font=config.GUI_FONT)
 
 	# Font Size Selection
-	font_size_entry = tkinter.Entry(settings_wnd, width=2, font=config.GUI_FONT)
+	font_size_entry = tkinter.Entry(settings_wnd, width=5, font=config.GUI_FONT)
 	font_size_entry.insert(0, settings["font_size"])
 
 	# Text Color Selection
 	text_color = tkinter.Button(settings_wnd,
 								width=3,
-								height=1,
-								)
+								height=1)
 
 	if validate_color(settings["text_color"]):
-			text_color.configure(background=settings["text_color"])
+		text_color.configure(background=settings["text_color"])
 	else:
 		text_color.configure(background="#000000")
 
 	def text_color_selection():
-		choosen_color = colorchooser.askcolor()
-		if choosen_color[1]:
-			settings["text_color"] = choosen_color[1]
+		chosen_color = colorchooser.askcolor(parent=settings_wnd)
+		if chosen_color[1]:
+			settings["text_color"] = chosen_color[1]
 			text_color.configure(background=settings["text_color"])
-
 		settings_wnd.focus_force()
 
 	text_color.configure(command=text_color_selection)
@@ -227,22 +239,21 @@ def edit_settings(root_wnd, apply_method):
 								height=1)
 
 	if validate_color(settings["background_color"]):
-			bg_color.configure(background=settings["background_color"])
+		bg_color.configure(background=settings["background_color"])
 	else:
 		bg_color.configure(background="#FFFFFF")
 
 	def bg_color_selection():
-		choosen_color = colorchooser.askcolor()
-		if choosen_color[1]:
-			settings["background_color"] = choosen_color[1]
+		chosen_color = colorchooser.askcolor(parent=settings_wnd)
+		if chosen_color[1]:
+			settings["background_color"] = chosen_color[1]
 			bg_color.configure(background=settings["background_color"])
-
 		settings_wnd.focus_force()
 
 	bg_color.configure(command=bg_color_selection)
 
 	# Server port Selection
-	port_entry = tkinter.Entry(settings_wnd, width=6, font=config.GUI_FONT)
+	port_entry = tkinter.Entry(settings_wnd, width=8, font=config.GUI_FONT)
 	port_entry.insert(0, settings["server_port"])
 
 	# Double Layout Selection
@@ -264,13 +275,11 @@ def edit_settings(root_wnd, apply_method):
 	use_newline = tkinter.BooleanVar()
 	newline_btn = tkinter.Checkbutton(settings_wnd,
 									  variable=use_newline,
-									  command=
-									  	(lambda: set_separator_active(not use_newline.get()))
-									  )
+									  command=lambda: set_separator_active(not use_newline.get()))
 
 	if settings["separator"] == config.NEWLINE_CONSTANT:
-			newline_btn.select()
-			set_separator_active(False);
+		newline_btn.select()
+		set_separator_active(False)
 	else:
 		separator_entry.insert(0, settings["separator"])
 
@@ -291,19 +300,19 @@ def edit_settings(root_wnd, apply_method):
 		settings["double_layout"] = encode_boolean_setting(double_layout.get())
 
 		if not validate_font_size(chosen_font_size):
-			msgbox.showerror(config.ERRORS["FONT_SIZE"][0], config.ERRORS["FONT_SIZE"][1])
+			msgbox.showerror(config.ERRORS["FONT_SIZE"][0], config.ERRORS["FONT_SIZE"][1], parent=settings_wnd)
 			errors_found = True
 		else:
 			settings["font_size"] = chosen_font_size
 
 		if not validate_server_port(chosen_port):
-			msgbox.showerror(config.ERRORS["SERVER_PORT"][0], config.ERRORS["SERVER_PORT"][1])
+			msgbox.showerror(config.ERRORS["SERVER_PORT"][0], config.ERRORS["SERVER_PORT"][1], parent=settings_wnd)
 			errors_found = True
 		else:
 			settings["server_port"] = chosen_port
 
 		if not validate_separator(chosen_separator):
-			msgbox.showerror(config.ERRORS["SEPARATOR"][0], config.ERRORS["SEPARATOR"][1])
+			msgbox.showerror(config.ERRORS["SEPARATOR"][0], config.ERRORS["SEPARATOR"][1], parent=settings_wnd)
 			errors_found = True
 		else:
 			settings["separator"] = chosen_separator
@@ -316,9 +325,9 @@ def edit_settings(root_wnd, apply_method):
 			settings_wnd.focus_force()
 
 	save_btn = tkinter.Button(settings_wnd,
-							  	command=control_and_save,
-							  	text=config.SETTINGS_WINDOW["SAVE"],
-							  	font=config.GUI_FONT)
+							  command=control_and_save,
+							  text=config.SETTINGS_WINDOW["SAVE"],
+							  font=config.GUI_FONT)
 	cancel_btn = tkinter.Button(settings_wnd,
 								command=settings_wnd.destroy,
 								text=config.SETTINGS_WINDOW["CANCEL"],
@@ -347,12 +356,21 @@ def edit_settings(root_wnd, apply_method):
 	save_btn.place(x=110, y=350)
 	cancel_btn.place(x=190, y=350)
 
+	# Handle window close
+	def on_closing():
+		settings_wnd.grab_release()
+		settings_wnd.destroy()
+
+	settings_wnd.protocol("WM_DELETE_WINDOW", on_closing)
+
 
 def validate_color(color):
 	"""
 	Returns whether or not given color is valid in the hexadecimal format.
 	"""
-	return isinstance(color, str) and len(color) == 7 and color[0] == "#"
+	if not isinstance(color, str):
+		return False
+	return len(color) == 7 and color[0] == "#" and all(c in '0123456789ABCDEFabcdef' for c in color[1:])
 
 
 def validate_font_size(size):
@@ -364,16 +382,16 @@ def validate_font_size(size):
 	except:
 		return False
 
-	return 0 < size < 70
+	return 6 <= size <= 72
 
 
 def validate_server_port(port):
 	"""
-	Returns Whether or not gicen port is a valid server port.
+	Returns Whether or not given port is a valid server port.
 	"""
 	try:
-		int(port)
-		return True
+		port_num = int(port)
+		return 1024 <= port_num <= 65535
 	except:
 		return False
 
@@ -385,7 +403,7 @@ def save_settings(settings):
 	file_content = ""
 
 	for key in settings.keys():
-			file_content += key + "=" + settings[key] + "\n"
+		file_content += key + "=" + str(settings[key]) + "\n"
 
 	set_settings_file_content(file_content)
 
@@ -393,33 +411,35 @@ def save_settings(settings):
 def decode_boolean_setting(setting):
 	"""
 	Decodes a boolean string of "True" or "False"
-	to the coorect boolean value.
+	to the correct boolean value.
 	"""
-	return setting == "True"
+	return str(setting) == "True"
 
 
 def encode_boolean_setting(value):
 	"""
-	Encodes a boolean to the  string "True" or "False".
+	Encodes a boolean to the string "True" or "False".
 	"""
-	if value:
-		return "True"
-	else:
-		return "False"
+	return "True" if value else "False"
 
 
 def validate_pixels(pixels):
 	"""
 	Checks if given string can be used as a pixel value for height or width.
-	Height or Width or assumed to never surpass 10000
+	Height or Width are assumed to never surpass 10000
 	"""
 	try:
 		pixels = int(pixels)
 	except:
 		return False
 
-	return 0 < pixels < 10000
+	return 200 <= pixels <= 10000
 
 
 def validate_separator(separator):
-	return separator.strip()
+	"""
+	Validates the separator string.
+	"""
+	if separator == config.NEWLINE_CONSTANT:
+		return True
+	return len(separator.strip()) > 0

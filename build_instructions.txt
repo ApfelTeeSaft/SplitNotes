@@ -1,6 +1,76 @@
---- Build Instructions ---
-Using py2exe and python 3.4
+--- Cross-Platform Build Instructions ---
 
-From the main directory run "python setup_exe.py py2exe".
-This creates a new "dist" folder with the SplitNotes .exe and needed data files.
-Zip up this folder for distribution.
+REQUIREMENTS:
+- Python 3.6 or higher
+- All source files in the same directory
+- resources/ folder with icon files
+
+=== WINDOWS ===
+
+Option 1: Using cx_Freeze (Recommended)
+1. Install cx_Freeze: pip install cx_Freeze
+2. Run: python setup_windows.py build
+3. Executable will be in build/exe.win-amd64-3.x/ (or similar)
+4. Distribute the entire build folder
+
+Option 2: Using py2exe (Alternative)
+1. Install py2exe: pip install py2exe
+2. Uncomment the py2exe section in setup_windows.py
+3. Run: python setup_windows.py py2exe
+4. Executable will be in dist/ folder
+
+=== macOS ===
+
+Using py2app:
+1. Install py2app: pip install py2app
+2. Run: python setup_mac.py py2app
+3. Application bundle will be in dist/SplitNotes.app
+4. You can distribute the .app bundle or create a DMG
+
+To create a DMG (optional):
+1. Run: hdiutil create -volname "SplitNotes" -srcfolder dist/SplitNotes.app -ov -format UDZO SplitNotes.dmg
+
+=== LINUX ===
+
+Using cx_Freeze:
+1. Install cx_Freeze: pip install cx_Freeze
+2. Run: python setup_linux.py build
+3. Run: python setup_linux.py package (creates proper Linux structure)
+4. Executable will be in build/splitnotes/
+
+Alternative - Run directly:
+- Ensure Python 3 and tkinter are installed
+- Run: python3 main_window.py
+
+=== DEVELOPMENT SETUP ===
+
+1. Clone/download all source files
+2. Create resources/ directory with icon files:
+   - green.png (connection active icon)  
+   - red.png (connection inactive icon)
+   - settings_icon.png (settings window icon)
+3. Run directly: python main_window.py
+
+=== TROUBLESHOOTING ===
+
+Common Issues:
+- Missing tkinter: Install python3-tk (Linux) or ensure full Python installation
+- Icon loading errors: Ensure resources/ folder is in the same directory
+- Socket errors: Check that LiveSplit Server component is installed and running
+- Font issues: The app will fallback to system default fonts if specified fonts aren't available
+
+Platform-specific Notes:
+- Windows: Antivirus might flag the executable, add exception if needed
+- macOS: First run might require right-click > Open due to Gatekeeper
+- Linux: Ensure X11 display is available for GUI
+
+=== DISTRIBUTION ===
+
+Windows: Distribute the entire build folder or use an installer creator
+macOS: Distribute .app bundle or .dmg file
+Linux: Distribute build folder or create .deb/.rpm package
+
+For all platforms, include:
+- README with installation/usage instructions
+- Sample notes file
+- LiveSplit Server component download link
