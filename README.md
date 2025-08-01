@@ -218,7 +218,9 @@ MIT License - see `license.txt` for details.
 **Originally Created by**: joeloskarsson
 
 **Ported to MacOS, Linux and refind Build Setup by**: ApfelTeeSaft
+
 **Original Version**: Windows-only Python application  
+
 **Cross-Platform Version**: Enhanced with macOS and Linux support
 
 ---
