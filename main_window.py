@@ -64,6 +64,7 @@ class BridgeServer:
 		self.server_socket = None
 		self.clients = []
 		self.state_lock = threading.Lock()
+		self.server_thread = None
 		
 	def start(self):
 		"""Start the TCP bridge server"""
@@ -73,20 +74,28 @@ class BridgeServer:
 		try:
 			self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 			self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+			self.server_socket.settimeout(1.0)  # Add timeout for clean shutdown
 			self.server_socket.bind((self.host, self.port))
 			self.server_socket.listen(5)
 			
 			self.running = True
 			
 			# Start server thread
-			server_thread = threading.Thread(target=self._server_loop, daemon=True)
-			server_thread.start()
+			self.server_thread = threading.Thread(target=self._server_loop, daemon=True)
+			self.server_thread.start()
 			
 			print(f"Bridge server started on {self.host}:{self.port}")
 			return True
 			
 		except Exception as e:
 			print(f"Failed to start bridge server: {e}")
+			self.running = False
+			if self.server_socket:
+				try:
+					self.server_socket.close()
+				except:
+					pass
+				self.server_socket = None
 			return False
 	
 	def stop(self):
@@ -94,7 +103,7 @@ class BridgeServer:
 		self.running = False
 		
 		# Close all client connections
-		for client in self.clients[:]:
+		for client in self.clients[:]:  # Copy list to avoid modification during iteration
 			try:
 				client.close()
 			except:
@@ -107,6 +116,11 @@ class BridgeServer:
 				self.server_socket.close()
 			except:
 				pass
+			self.server_socket = None
+		
+		# Wait for server thread to finish
+		if self.server_thread and self.server_thread.is_alive():
+			self.server_thread.join(timeout=2.0)
 		
 		print("Bridge server stopped")
 	
@@ -117,37 +131,55 @@ class BridgeServer:
 				client, address = self.server_socket.accept()
 				print(f"Browser client connected from {address}")
 				
+				# Set client timeout
+				client.settimeout(30.0)
+				
 				self.clients.append(client)
 				client_thread = threading.Thread(
 					target=self._handle_client, 
-					args=(client,), 
+					args=(client, address), 
 					daemon=True
 				)
 				client_thread.start()
 				
+			except socket.timeout:
+				continue  # Normal timeout, check if still running
 			except Exception as e:
 				if self.running:
 					print(f"Error accepting connection: {e}")
+				break
 	
-	def _handle_client(self, client):
+	def _handle_client(self, client, address):
 		"""Handle individual client connections"""
 		try:
 			while self.running:
-				data = client.recv(1024)
-				if not data:
-					break
-				
 				try:
-					# Parse JSON message from browser extension
-					message = json.loads(data.decode('utf-8'))
-					self._process_browser_message(message)
-				except json.JSONDecodeError:
-					# Handle plain text commands if needed
-					command = data.decode('utf-8').strip()
-					print(f"Received plain text command: {command}")
+					data = client.recv(1024)
+					if not data:
+						break
+					
+					try:
+						# Parse JSON message from browser extension
+						message = json.loads(data.decode('utf-8'))
+						self._process_browser_message(message)
+						
+						# Send acknowledgment
+						response = {"status": "ok", "timestamp": time.time()}
+						client.send((json.dumps(response) + '\n').encode('utf-8'))
+						
+					except json.JSONDecodeError:
+						# Handle plain text commands if needed
+						command = data.decode('utf-8').strip()
+						print(f"Received plain text command: {command}")
+						
+				except socket.timeout:
+					continue
+				except Exception as e:
+					print(f"Error receiving from client {address}: {e}")
+					break
 					
 		except Exception as e:
-			print(f"Error handling client: {e}")
+			print(f"Error handling client {address}: {e}")
 		finally:
 			try:
 				client.close()
@@ -155,7 +187,7 @@ class BridgeServer:
 				pass
 			if client in self.clients:
 				self.clients.remove(client)
-			print("Browser client disconnected")
+			print(f"Browser client {address} disconnected")
 	
 	def _process_browser_message(self, message):
 		"""Process JSON messages from browser extensions"""
@@ -188,6 +220,8 @@ class BridgeServer:
 				elif message.get('type') == 'splits_updated':
 					splits = message.get('splits', [])
 					print(f"Browser sync: Received {len(splits)} split names")
+					if 'bridge_state' not in runtime_info:
+						runtime_info["bridge_state"] = {}
 					runtime_info["bridge_state"]['splits'] = splits
 					
 			except Exception as e:
@@ -198,10 +232,10 @@ class BridgeServer:
 		if not self.clients:
 			return
 			
-		message = json.dumps(state) + '\n'  # Add newline for better parsing
+		message = json.dumps(state) + '\n'
 		disconnected_clients = []
 		
-		for client in self.clients:
+		for client in self.clients[:]:  # Copy list to avoid modification during iteration
 			try:
 				client.send(message.encode('utf-8'))
 			except:
@@ -222,6 +256,410 @@ class BridgeServer:
 		}
 
 
+def menu_open_bridge_settings(root_wnd):
+	"""Open bridge server settings dialog with proper save button functionality"""
+	settings_wnd = tkinter.Toplevel(master=root_wnd)
+	settings_wnd.title("TCP Bridge Server Settings")
+	settings_wnd.geometry("520x500")
+	settings_wnd.resizable(False, False)
+	settings_wnd.transient(root_wnd)
+	settings_wnd.grab_set()
+	
+	# Center window
+	settings_wnd.update_idletasks()
+	x = (settings_wnd.winfo_screenwidth() // 2) - (520 // 2)
+	y = (settings_wnd.winfo_screenheight() // 2) - (500 // 2)
+	settings_wnd.geometry(f"+{x}+{y}")
+	
+	# Main container
+	main_frame = tkinter.Frame(settings_wnd)
+	main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+	
+	# Settings section
+	settings_section = tkinter.LabelFrame(main_frame, text="Bridge Configuration", font=config.GUI_FONT)
+	settings_section.pack(fill='x', pady=(0, 10))
+	
+	# Load current settings from config file
+	current_settings = setting_handler.load_settings()
+	current_enabled = current_settings.get("bridge_enabled", "false").lower() == "true"
+	current_port = int(current_settings.get("bridge_port", "16835"))
+	
+	# Enable bridge checkbox
+	bridge_enabled_var = tkinter.BooleanVar(value=current_enabled)
+	bridge_enabled_cb = tkinter.Checkbutton(
+		settings_section,
+		text="Enable TCP Bridge Server for Browser Extensions",
+		variable=bridge_enabled_var,
+		font=config.GUI_FONT
+	)
+	bridge_enabled_cb.pack(anchor='w', padx=15, pady=10)
+	
+	# Port setting frame
+	port_frame = tkinter.Frame(settings_section)
+	port_frame.pack(fill='x', padx=15, pady=5)
+	
+	tkinter.Label(port_frame, text="Bridge Server Port:", font=config.GUI_FONT).pack(side='left')
+	
+	port_var = tkinter.StringVar(value=str(current_port))
+	port_entry = tkinter.Entry(port_frame, textvariable=port_var, font=config.GUI_FONT, width=8)
+	port_entry.pack(side='left', padx=(10, 5))
+	
+	tkinter.Label(
+		port_frame, 
+		text="(default: 16835)",
+		font=('Arial', 9),
+		fg='gray'
+	).pack(side='left')
+	
+	# Help text
+	help_label = tkinter.Label(
+		settings_section,
+		text="Browser extensions connect to this TCP port to sync with LiveSplit One",
+		font=('Arial', 9),
+		fg='gray',
+		wraplength=450
+	)
+	help_label.pack(anchor='w', padx=15, pady=(0, 10))
+	
+	# Save button and feedback area
+	save_frame = tkinter.Frame(settings_section)
+	save_frame.pack(fill='x', padx=15, pady=10)
+	
+	# Feedback text area
+	feedback_var = tkinter.StringVar(value="")
+	feedback_label = tkinter.Label(
+		save_frame,
+		textvariable=feedback_var,
+		font=('Arial', 10),
+		fg='blue',
+		wraplength=300,
+		justify='left'
+	)
+	feedback_label.pack(side='left', fill='x', expand=True)
+	
+	def save_bridge_settings():
+		"""Save bridge settings and start/stop server based on checkbox"""
+		try:
+			# Clear previous feedback
+			feedback_var.set("Saving settings...")
+			feedback_label.config(fg='blue')
+			settings_wnd.update()
+			
+			# Validate port
+			try:
+				port = int(port_var.get())
+				if not (1024 <= port <= 65535):
+					raise ValueError("Port must be between 1024 and 65535")
+			except ValueError as e:
+				feedback_var.set(f"Error: {e}")
+				feedback_label.config(fg='red')
+				return
+			
+			# Get checkbox state
+			is_enabled = bridge_enabled_var.get()
+			
+			print(f"Saving bridge settings: enabled={is_enabled}, port={port}")
+			
+			# Stop existing server if running
+			if runtime_info.get("bridge_server"):
+				print("Stopping existing bridge server...")
+				runtime_info["bridge_server"].stop()
+				runtime_info["bridge_server"] = None
+			
+			# Update runtime settings
+			runtime_info["bridge_enabled"] = is_enabled
+			runtime_info["bridge_port"] = port
+			
+			# Save to configuration file
+			settings = setting_handler.load_settings()
+			settings["bridge_enabled"] = "true" if is_enabled else "false"
+			settings["bridge_port"] = str(port)
+			setting_handler.save_settings(settings)
+			
+			print(f"Settings saved to config file: bridge_enabled={settings['bridge_enabled']}")
+			
+			# Start or stop server based on checkbox state
+			if is_enabled:
+				print(f"Starting TCP bridge server on port {port}...")
+				bridge_server = BridgeServer(port)
+				if bridge_server.start():
+					runtime_info["bridge_server"] = bridge_server
+					feedback_var.set(f"✓ Settings saved! TCP Bridge server started on port {port}")
+					feedback_label.config(fg='green')
+					print("✓ Bridge server started successfully")
+				else:
+					# Failed to start server, disable the setting
+					runtime_info["bridge_enabled"] = False
+					settings["bridge_enabled"] = "false"
+					setting_handler.save_settings(settings)
+					bridge_enabled_var.set(False)  # Update checkbox
+					
+					feedback_var.set(f"✗ Failed to start server on port {port}. Settings disabled.")
+					feedback_label.config(fg='red')
+					print("✗ Failed to start bridge server")
+			else:
+				feedback_var.set("✓ Settings saved! TCP Bridge server disabled")
+				feedback_label.config(fg='orange')
+				print("✓ Bridge server disabled")
+			
+			# Update main window title to reflect bridge status
+			try:
+				update_title(config.DEFAULT_WINDOW["TITLE"], root_wnd)
+			except:
+				pass
+				
+		except Exception as e:
+			feedback_var.set(f"✗ Error saving settings: {e}")
+			feedback_label.config(fg='red')
+			print(f"Error in save_bridge_settings: {e}")
+	
+	# Save button
+	save_button = tkinter.Button(
+		save_frame,
+		text="Save Settings",
+		command=save_bridge_settings,
+		font=config.GUI_FONT,
+		width=12,
+		bg='lightblue',
+		relief='raised'
+	)
+	save_button.pack(side='right', padx=(10, 0))
+	
+	# Status section
+	status_frame = tkinter.LabelFrame(main_frame, text="Server Status", font=config.GUI_FONT)
+	status_frame.pack(fill='both', expand=True, pady=(0, 10))
+	
+	# Status text area with scrollbar
+	status_text_frame = tkinter.Frame(status_frame)
+	status_text_frame.pack(fill='both', expand=True, padx=10, pady=10)
+	
+	status_text = tkinter.Text(
+		status_text_frame, 
+		height=8, 
+		width=60, 
+		font=('Courier', 9), 
+		state='disabled',
+		wrap='word'
+	)
+	status_scrollbar = tkinter.Scrollbar(status_text_frame, command=status_text.yview)
+	status_text.config(yscrollcommand=status_scrollbar.set)
+	
+	status_text.pack(side='left', fill='both', expand=True)
+	status_scrollbar.pack(side='right', fill='y')
+	
+	def update_status():
+		"""Update the status display"""
+		status_text.config(state='normal')
+		status_text.delete(1.0, tkinter.END)
+		
+		# Get current runtime status
+		bridge_server = runtime_info.get("bridge_server")
+		bridge_enabled = runtime_info.get("bridge_enabled", False)
+		bridge_port = runtime_info.get("bridge_port", 16835)
+		
+		if bridge_server and bridge_enabled:
+			status = bridge_server.get_status()
+			last_state = status.get('last_state', {})
+			
+			status_info = f"""TCP Bridge Server Status: RUNNING ✓
+Port: {status['port']}
+Connected Browsers: {status['clients']}
+Server Running: {status['running']}
+
+Runtime Information:
+Bridge Enabled: {bridge_enabled}
+Current Split: {last_state.get('currentSplit', 'N/A')}
+Timer Running: {last_state.get('timerRunning', 'N/A')}
+Last Update: {time.ctime(last_state.get('timestamp', 0)) if last_state.get('timestamp') else 'Never'}
+
+Configuration Status:
+Settings file: resources/config.cfg
+bridge_enabled: {"true" if bridge_enabled else "false"}
+bridge_port: {bridge_port}
+
+Connection Info:
+Browser extensions can connect to localhost:{bridge_port}
+Send JSON messages with timer state data"""
+		else:
+			status_info = f"""TCP Bridge Server Status: STOPPED ✗
+Port: {bridge_port}
+Connected Browsers: 0
+Server Running: False
+
+Runtime Information:
+Bridge Enabled: {bridge_enabled}
+Current Split: N/A
+Timer Running: N/A
+Last Update: Never
+
+Configuration Status:
+Settings file: resources/config.cfg
+bridge_enabled: {"true" if bridge_enabled else "false"}
+bridge_port: {bridge_port}
+
+To enable:
+1. Check 'Enable TCP Bridge Server' checkbox above
+2. Click 'Save Settings' button
+3. Verify status changes to 'RUNNING ✓'"""
+		
+		status_text.insert(1.0, status_info)
+		status_text.config(state='disabled')
+		
+		# Schedule next update if window still exists
+		try:
+			if settings_wnd.winfo_exists():
+				settings_wnd.after(2000, update_status)
+		except:
+			pass
+	
+	# Start status updates
+	update_status()
+	
+	# Test connection button
+	test_frame = tkinter.Frame(main_frame)
+	test_frame.pack(fill='x', pady=(0, 10))
+	
+	test_feedback_var = tkinter.StringVar(value="")
+	test_feedback_label = tkinter.Label(
+		test_frame,
+		textvariable=test_feedback_var,
+		font=('Arial', 9),
+		fg='gray'
+	)
+	test_feedback_label.pack(side='left', fill='x', expand=True)
+	
+	def test_connection():
+		"""Test the bridge server connection"""
+		test_feedback_var.set("Testing connection...")
+		test_feedback_label.config(fg='blue')
+		settings_wnd.update()
+		
+		try:
+			port = int(port_var.get())
+		except ValueError:
+			test_feedback_var.set("✗ Invalid port number")
+			test_feedback_label.config(fg='red')
+			return
+		
+		try:
+			# Try to connect to the bridge server
+			test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+			test_socket.settimeout(3.0)
+			test_socket.connect(('localhost', port))
+			
+			# Send test message
+			test_message = {
+				"type": "connection_test", 
+				"timestamp": time.time(),
+				"source": "settings_dialog"
+			}
+			test_socket.send((json.dumps(test_message) + '\n').encode('utf-8'))
+			
+			# Wait for response
+			response = test_socket.recv(1024)
+			test_socket.close()
+			
+			if response:
+				test_feedback_var.set("✓ Connection test successful! Server is responding.")
+				test_feedback_label.config(fg='green')
+			else:
+				test_feedback_var.set("✗ Connected but no response received")
+				test_feedback_label.config(fg='orange')
+				
+		except ConnectionRefusedError:
+			test_feedback_var.set("✗ Connection refused. Server not running.")
+			test_feedback_label.config(fg='red')
+		except socket.timeout:
+			test_feedback_var.set("✗ Connection timeout. Check if server is running.")
+			test_feedback_label.config(fg='red')
+		except Exception as e:
+			test_feedback_var.set(f"✗ Connection test failed: {e}")
+			test_feedback_label.config(fg='red')
+	
+	test_button = tkinter.Button(
+		test_frame,
+		text="Test Connection",
+		command=test_connection,
+		font=config.GUI_FONT,
+		width=15
+	)
+	test_button.pack(side='right')
+	
+	# Bottom buttons frame
+	button_frame = tkinter.Frame(main_frame)
+	button_frame.pack(fill='x')
+	
+	def close_dialog():
+		"""Close the dialog"""
+		settings_wnd.destroy()
+	
+	# Close button
+	tkinter.Button(
+		button_frame,
+		text="Close",
+		command=close_dialog,
+		font=config.GUI_FONT,
+		width=10
+	).pack(side='right')
+	
+	# Info button for help
+	def show_help():
+		"""Show help information"""
+		help_text = """TCP Bridge Server Help:
+
+The TCP Bridge Server allows browser extensions to connect to SplitNotes and send timer state information from LiveSplit One.
+
+SETUP:
+1. Check 'Enable TCP Bridge Server' checkbox
+2. Set the port (default: 16835)
+3. Click 'Save Settings'
+4. Verify status shows 'RUNNING ✓'
+
+BROWSER EXTENSION:
+Browser extensions should connect to localhost:16835 and send JSON messages like:
+{
+  "type": "timer_state",
+  "running": true,
+  "currentSplit": 2,
+  "splitName": "Split Name"
+}
+
+TROUBLESHOOTING:
+• Make sure port is not blocked by firewall
+• Check that no other application is using the port
+• Use 'Test Connection' to verify server is working
+• Restart SplitNotes if server fails to start"""
+		
+		messagebox.showinfo("TCP Bridge Help", help_text)
+	
+	tkinter.Button(
+		button_frame,
+		text="Help",
+		command=show_help,
+		font=config.GUI_FONT,
+		width=10
+	).pack(side='right', padx=(0, 10))
+	
+	# Handle window close
+	def on_closing():
+		settings_wnd.grab_release()
+		settings_wnd.destroy()
+
+	settings_wnd.protocol("WM_DELETE_WINDOW", on_closing)
+	
+	# Initial feedback
+	if current_enabled:
+		if runtime_info.get("bridge_server"):
+			feedback_var.set(f"✓ TCP Bridge server is currently running on port {current_port}")
+			feedback_label.config(fg='green')
+		else:
+			feedback_var.set(f"⚠ Bridge enabled in config but server not running")
+			feedback_label.config(fg='orange')
+	else:
+		feedback_var.set("TCP Bridge server is currently disabled")
+		feedback_label.config(fg='gray')
+
+
 def update(window, com_socket, text1, text2):
 	"""Enhanced update function with TCP bridge server support"""
 	if runtime_info["force_reset"]:
@@ -231,9 +669,8 @@ def update(window, com_socket, text1, text2):
 	elif not runtime_info["ls_connected"]:
 		# Check if we have browser state as fallback
 		if runtime_info["bridge_enabled"] and runtime_info.get("bridge_state"):
-			# Use browser state when LiveSplit is not connected
 			bridge_state = runtime_info["bridge_state"]
-			if time.time() - bridge_state.get('timestamp', 0) < 5:  # State is recent (5 seconds)
+			if time.time() - bridge_state.get('timestamp', 0) < 5:
 				if runtime_info["notes"]:
 					update_GUI(window, com_socket, text1, text2)
 		
@@ -245,40 +682,28 @@ def update(window, com_socket, text1, text2):
 			new_index = con.get_split_index(com_socket)
 
 			if isinstance(new_index, bool):
-				# Connection error
 				com_socket = test_connection(com_socket, window, text1, text2)
 			else:
 				if new_index == -1:
-					# Timer not running
 					if runtime_info["timer_running"]:
 						runtime_info["timer_running"] = False
 						runtime_info["active_split"] = new_index
 						update_GUI(window, com_socket, text1, text2)
-						
-						# Notify browsers of state change
 						notify_browsers_state_change()
 				else:
-					# Timer is running
 					if not runtime_info["timer_running"]:
 						runtime_info["timer_running"] = True
-						# Special case to fix scrolling
 						if runtime_info["active_split"] == 0:
 							runtime_info["active_split"] = -1
 
 					if runtime_info["active_split"] != new_index:
-						# New split, need to update
 						runtime_info["active_split"] = new_index
 						update_GUI(window, com_socket, text1, text2)
-						
-						# Notify browsers of state change
 						notify_browsers_state_change()
 		else:
-			# Notes not yet loaded
 			com_socket = test_connection(com_socket, window, text1, text2)
 
-	# Continue main loop
-	window.after(int(config.POLLING_TIME * 1000),
-				 update, window, com_socket, text1, text2)
+	window.after(int(config.POLLING_TIME * 1000), update, window, com_socket, text1, text2)
 
 
 def notify_browsers_state_change():
@@ -296,198 +721,6 @@ def notify_browsers_state_change():
 			runtime_info["bridge_server"].send_state_to_browsers(state)
 		except Exception as e:
 			print(f"Error notifying browsers: {e}")
-
-
-def menu_open_bridge_settings(root_wnd):
-	"""Open bridge server settings dialog"""
-	settings_wnd = tkinter.Toplevel(master=root_wnd)
-	settings_wnd.title("Bridge Server Settings")
-	settings_wnd.geometry("500x400")
-	settings_wnd.resizable(False, False)
-	settings_wnd.transient(root_wnd)
-	settings_wnd.grab_set()
-	
-	# Center window
-	settings_wnd.update_idletasks()
-	x = (settings_wnd.winfo_screenwidth() // 2) - (500 // 2)
-	y = (settings_wnd.winfo_screenheight() // 2) - (400 // 2)
-	settings_wnd.geometry(f"+{x}+{y}")
-	
-	# Create notebook for tabs
-	notebook = ttk.Notebook(settings_wnd)
-	notebook.pack(fill='both', expand=True, padx=10, pady=10)
-	
-	# Bridge Settings Tab
-	bridge_frame = ttk.Frame(notebook)
-	notebook.add(bridge_frame, text="Bridge Server")
-	
-	# Enable bridge checkbox
-	bridge_enabled_var = tkinter.BooleanVar(value=runtime_info["bridge_enabled"])
-	bridge_enabled_cb = tkinter.Checkbutton(
-		bridge_frame,
-		text="Enable TCP Bridge Server for Browser Extensions",
-		variable=bridge_enabled_var,
-		font=config.GUI_FONT
-	)
-	bridge_enabled_cb.pack(anchor='w', padx=10, pady=10)
-	
-	# Port setting
-	tkinter.Label(bridge_frame, text="Bridge Server Port:", font=config.GUI_FONT).pack(anchor='w', padx=10)
-	port_var = tkinter.StringVar(value=str(runtime_info["bridge_port"]))
-	port_entry = tkinter.Entry(bridge_frame, textvariable=port_var, font=config.GUI_FONT, width=10)
-	port_entry.pack(anchor='w', padx=10, pady=5)
-	
-	tkinter.Label(
-		bridge_frame, 
-		text="Browser extensions connect to this TCP port (default: 16835)",
-		font=('Arial', 9),
-		fg='gray'
-	).pack(anchor='w', padx=10)
-	
-	# Status frame
-	status_frame = tkinter.LabelFrame(bridge_frame, text="Server Status", font=config.GUI_FONT)
-	status_frame.pack(fill='x', padx=10, pady=20)
-	
-	status_text = tkinter.Text(status_frame, height=8, width=60, font=('Courier', 9))
-	status_text.pack(padx=10, pady=10)
-	
-	def update_status():
-		if runtime_info.get("bridge_server"):
-			status = runtime_info["bridge_server"].get_status()
-			status_info = f"""TCP Bridge Server Status:
-Running: {'Yes' if status['running'] else 'No'}
-Port: {status['port']}
-Connected Browsers: {status['clients']}
-
-Last State:
-Current Split: {status['last_state'].get('currentSplit', 'N/A')}
-Timer Running: {status['last_state'].get('timerRunning', 'N/A')}
-Last Update: {time.ctime(status['last_state'].get('timestamp', 0)) if status['last_state'].get('timestamp') else 'Never'}
-"""
-		else:
-			status_info = "TCP Bridge Server: Not Running"
-		
-		status_text.delete(1.0, tkinter.END)
-		status_text.insert(1.0, status_info)
-		
-		# Schedule next update if window still exists
-		try:
-			if settings_wnd.winfo_exists():
-				settings_wnd.after(2000, update_status)
-		except:
-			pass
-	
-	# Start status updates
-	update_status()
-	
-	# Instructions Tab
-	help_frame = ttk.Frame(notebook)
-	notebook.add(help_frame, text="Setup Instructions")
-	
-	help_text = tkinter.Text(help_frame, wrap='word', font=('Arial', 10))
-	help_text.pack(fill='both', expand=True, padx=10, pady=10)
-	
-	instructions = """Browser Extension Setup (TCP Bridge):
-
-1. CHROME/CHROMIUM:
-   • Go to chrome://extensions/
-   • Enable Developer Mode
-   • Click "Load unpacked"
-   • Select the Chrome extension folder
-   • Click the extension icon and enable the TCP bridge
-
-2. FIREFOX:
-   • Go to about:debugging
-   • Click "This Firefox" → "Load Temporary Add-on"
-   • Select manifest.json from Firefox extension folder
-   • Click the extension icon and enable the TCP bridge
-
-3. USAGE:
-   • Start SplitNotes with TCP bridge enabled
-   • Open https://one.livesplit.org/
-   • Load your splits and start timing
-   • SplitNotes will automatically sync with LiveSplit One
-   • Notes will advance when you split in the browser
-
-4. TROUBLESHOOTING:
-   • Check that TCP bridge server is running (see Status tab)
-   • Verify browser extension is enabled and connected
-   • Ensure you're on one.livesplit.org
-   • Check browser console for connection errors (F12)
-   • Verify port 16835 is not blocked by firewall
-
-TECHNICAL DETAILS:
-The TCP bridge server replaces websockets with a simple TCP
-connection on port 16835. Browser extensions communicate via
-JSON messages over this TCP connection for better reliability
-and simpler setup without external dependencies."""
-	
-	help_text.insert(1.0, instructions)
-	help_text.config(state='disabled')
-	
-	# Buttons
-	button_frame = tkinter.Frame(settings_wnd)
-	button_frame.pack(fill='x', padx=10, pady=10)
-	
-	def apply_settings():
-		try:
-			# Validate port
-			port = int(port_var.get())
-			if not (1024 <= port <= 65535):
-				raise ValueError("Port must be between 1024 and 65535")
-			
-			# Stop existing server if running
-			if runtime_info.get("bridge_server"):
-				runtime_info["bridge_server"].stop()
-				runtime_info["bridge_server"] = None
-			
-			# Update settings
-			runtime_info["bridge_enabled"] = bridge_enabled_var.get()
-			runtime_info["bridge_port"] = port
-			
-			# Start server if enabled
-			if runtime_info["bridge_enabled"]:
-				bridge_server = BridgeServer(port)
-				if bridge_server.start():
-					runtime_info["bridge_server"] = bridge_server
-					messagebox.showinfo("Success", "TCP Bridge server started successfully!")
-				else:
-					messagebox.showerror("Error", "Failed to start TCP bridge server!")
-					return
-			else:
-				messagebox.showinfo("Info", "TCP Bridge server disabled")
-			
-			# Save settings
-			settings = setting_handler.load_settings()
-			settings["bridge_enabled"] = str(runtime_info["bridge_enabled"])
-			settings["bridge_port"] = str(runtime_info["bridge_port"])
-			setting_handler.save_settings(settings)
-			
-			settings_wnd.destroy()
-			
-		except ValueError as e:
-			messagebox.showerror("Error", f"Invalid settings: {e}")
-		except Exception as e:
-			messagebox.showerror("Error", f"Failed to apply settings: {e}")
-	
-	def cancel_settings():
-		settings_wnd.destroy()
-	
-	tkinter.Button(
-		button_frame,
-		text="Apply",
-		command=apply_settings,
-		font=config.GUI_FONT,
-		width=10
-	).pack(side='right', padx=5)
-	
-	tkinter.Button(
-		button_frame,
-		text="Cancel",
-		command=cancel_settings,
-		font=config.GUI_FONT,
-		width=10
-	).pack(side='right')
 
 
 def update_GUI(window, com_socket, text1, text2):
@@ -541,7 +774,6 @@ def server_found(window):
 def update_icon(active, window):
 	"""Updates icon with TCP bridge server status consideration"""
 	try:
-		# Show green if either LiveSplit connected OR bridge has recent browser data
 		bridge_active = (runtime_info["bridge_enabled"] and 
 						runtime_info.get("bridge_state") and
 						time.time() - runtime_info["bridge_state"].get('timestamp', 0) < 10)
@@ -619,14 +851,12 @@ def load_notes(window, text1, text2, com_socket):
 			setting_handler.save_settings(settings)
 
 			split_c = len(notes)
-			show_info(("Notes Loaded",
-					   f"Loaded notes with {split_c} splits."))
+			show_info(("Notes Loaded", f"Loaded notes with {split_c} splits."))
 
 			if not runtime_info["timer_running"]:
 				runtime_info["active_split"] = -1
 
 			update_GUI(window, com_socket, text1, text2)
-
 		else:
 			show_info(config.ERRORS["NOTES_EMPTY"], True)
 
@@ -699,7 +929,7 @@ def set_title_notes(window, index, split_name=False):
 	"""Set window title to fit with displayed notes"""
 	title = config.DEFAULT_WINDOW["TITLE"]
 
-	disp_index = str(index + 1)  # start at 1
+	disp_index = str(index + 1)
 	title += " - " + disp_index
 
 	if split_name:
@@ -786,28 +1016,44 @@ def do_on_close(root_wnd):
 
 
 def init_UI(root):
-	"""Initialize UI with TCP bridge server integration"""
+	"""Initialize UI with proper TCP bridge server integration"""
 	com_socket = con.init_socket()
 
 	# Load Settings (including bridge settings)
+	print("Loading SplitNotes settings...")
 	settings = setting_handler.load_settings()
 	runtime_info["server_port"] = int(settings["server_port"])
 	runtime_info["settings"] = settings
 	
-	# Load TCP bridge settings
-	runtime_info["bridge_enabled"] = setting_handler.decode_boolean_setting(
-		settings.get("bridge_enabled", "False")
-	)
-	runtime_info["bridge_port"] = int(settings.get("bridge_port", "16835"))
+	# Load TCP bridge settings with proper validation
+	print("Loading TCP bridge settings...")
+	bridge_enabled_str = settings.get("bridge_enabled", "false").lower().strip()
+	runtime_info["bridge_enabled"] = bridge_enabled_str == "true"
 	
-	# Start TCP bridge server if enabled
+	try:
+		runtime_info["bridge_port"] = int(settings.get("bridge_port", "16835"))
+	except (ValueError, TypeError):
+		print("Invalid bridge port in settings, using default 16835")
+		runtime_info["bridge_port"] = 16835
+		# Update settings with correct port
+		settings["bridge_port"] = "16835"
+		setting_handler.save_settings(settings)
+	
+	print(f"Bridge settings loaded: enabled={runtime_info['bridge_enabled']}, port={runtime_info['bridge_port']}")
+	
+	# Start TCP bridge server if enabled in settings
 	if runtime_info["bridge_enabled"]:
+		print(f"Bridge is enabled in config, starting TCP bridge server on port {runtime_info['bridge_port']}...")
 		bridge_server = BridgeServer(runtime_info["bridge_port"])
 		if bridge_server.start():
 			runtime_info["bridge_server"] = bridge_server
-			print("TCP bridge server started for browser extensions")
+			print("✓ TCP bridge server started successfully for browser extensions")
 		else:
-			print("Failed to start TCP bridge server")
+			print("✗ Failed to start TCP bridge server")
+			print("  This might be due to port already in use or firewall settings")
+			# Don't disable the setting here - let user handle it in settings dialog
+	else:
+		print("TCP bridge server is disabled in configuration")
 
 	# Graphical components
 	root.geometry(settings["width"] + "x" + settings["height"])
@@ -903,6 +1149,13 @@ def init_UI(root):
 
 	# Call update loop
 	update(root, com_socket, text1, text2)
+	
+	# Debug: Print final bridge status
+	bridge_running = runtime_info.get('bridge_server') is not None
+	print(f"Final bridge status: enabled={runtime_info['bridge_enabled']}, server_running={bridge_running}")
+	
+	if runtime_info['bridge_enabled'] and not bridge_running:
+		print("Warning: Bridge is enabled but server failed to start. Check TCP Bridge Settings.")
 
 
 def main():

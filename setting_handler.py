@@ -44,14 +44,17 @@ def load_settings():
 		with open(settings_path, "r", encoding='utf-8') as settings_file:
 			settings_content = settings_file.readlines()
 			settings_content = [line.strip() for line in settings_content]
+		print(f"Settings loaded from: {settings_path}")
 	except:
 		# File not found
+		print("Settings file not found, creating default settings")
 		settings_content = set_default_settings()
 
 	settings = format_settings(settings_content)
 
 	# Check so settings file has all settings
 	if not validate_settings(settings):
+		print("Settings validation failed, creating default settings")
 		settings = format_settings(set_default_settings())
 
 	return settings
@@ -62,6 +65,7 @@ def set_default_settings():
 	Creates a config file with default settings. 
 	Returns the default config-file content.
 	"""
+	print(f"Creating default settings at: {settings_path}")
 	set_settings_file_content(config.DEFAULT_CONFIG)
 	return config.DEFAULT_CONFIG.split("\n")
 
@@ -79,12 +83,14 @@ def format_settings(file_rows):
 
 	for row in file_rows:
 		row = row.strip()
-		if '=' in row:
+		if '=' in row and not row.startswith('#'):  # Skip comments
 			parts = row.split("=", 1)
 
 			if len(parts) == SETTING_PART_LENGTH:
 				# Strip to remove whitespace at end and beginning
-				settings[parts[0].strip()] = parts[1].strip()
+				key = parts[0].strip()
+				value = parts[1].strip()
+				settings[key] = value
 
 	return settings
 
@@ -92,40 +98,70 @@ def format_settings(file_rows):
 def validate_settings(settings):
 	"""
 	Checks a settings dictionary so that all the needed settings are present.
+	Enhanced with comprehensive bridge settings validation.
 	"""
 
 	for req_setting in config.REQUIRED_SETTINGS:
 		if req_setting not in settings:
+			print(f"Missing required setting: {req_setting}")
 			return False
 
 	if not validate_font_size(settings["font_size"]):
+		print(f"Invalid font size: {settings['font_size']}")
 		return False
 
 	if not validate_server_port(settings["server_port"]):
+		print(f"Invalid server port: {settings['server_port']}")
 		return False
 
 	if not validate_color(settings["text_color"]):
+		print(f"Invalid text color: {settings['text_color']}")
 		return False
 
 	if not validate_color(settings["background_color"]):
+		print(f"Invalid background color: {settings['background_color']}")
 		return False
 
 	if settings["font"] not in config.AVAILABLE_FONTS:
+		print(f"Invalid font: {settings['font']}")
 		return False
 
-	if settings["double_layout"] not in ["True", "False"]:
+	if settings["double_layout"].lower() not in ["true", "false"]:
+		print(f"Invalid double_layout: {settings['double_layout']}")
 		return False
 
 	if not validate_pixels(settings["width"]):
+		print(f"Invalid width: {settings['width']}")
 		return False
 
 	if not validate_pixels(settings["height"]):
+		print(f"Invalid height: {settings['height']}")
 		return False
 
 	if not validate_separator(settings["separator"]):
+		print(f"Invalid separator: {settings['separator']}")
 		return False
 
+	# Bridge settings validation
+	if settings["bridge_enabled"].lower() not in ["true", "false"]:
+		print(f"Invalid bridge_enabled: {settings['bridge_enabled']}")
+		return False
+
+	if not validate_bridge_port(settings["bridge_port"]):
+		print(f"Invalid bridge port: {settings['bridge_port']}")
+		return False
+
+	print("All settings validated successfully")
 	return True
+
+
+def validate_bridge_port(port):
+	"""Returns whether or not given port is a valid bridge server port."""
+	try:
+		port_num = int(port)
+		return 1024 <= port_num <= 65535
+	except:
+		return False
 
 
 def set_settings_file_content(content):
@@ -138,8 +174,49 @@ def set_settings_file_content(content):
 	try:
 		with open(settings_path, "w", encoding='utf-8') as settings_file:
 			settings_file.write(content)
+		print(f"Settings content written to: {settings_path}")
 	except Exception as e:
-		print(f"Error saving settings: {e}")
+		print(f"Error saving settings content: {e}")
+
+
+def save_settings(settings):
+	"""
+	Saves given settings to the settings file.
+	Enhanced to ensure bridge settings are properly formatted.
+	"""
+	print("Saving settings...")
+	
+	# Ensure bridge settings are present and properly formatted
+	if "bridge_enabled" not in settings:
+		settings["bridge_enabled"] = "false"
+	if "bridge_port" not in settings:
+		settings["bridge_port"] = "16835"
+	
+	# Convert boolean values to lowercase strings for consistency
+	if isinstance(settings.get("bridge_enabled"), bool):
+		settings["bridge_enabled"] = str(settings["bridge_enabled"]).lower()
+	
+	file_content = ""
+	
+	# Write settings in a specific order for better readability
+	setting_order = [
+		"notes", "font", "font_size", "text_color", "background_color",
+		"double_layout", "server_port", "width", "height", "separator",
+		"bridge_enabled", "bridge_port"
+	]
+	
+	# Write ordered settings first
+	for key in setting_order:
+		if key in settings:
+			file_content += f"{key}={settings[key]}\n"
+	
+	# Write any additional settings not in the order list
+	for key, value in settings.items():
+		if key not in setting_order:
+			file_content += f"{key}={value}\n"
+
+	set_settings_file_content(file_content)
+	print(f"Settings saved: bridge_enabled={settings.get('bridge_enabled')}, bridge_port={settings.get('bridge_port')}")
 
 
 def edit_settings(root_wnd, apply_method):
@@ -417,31 +494,20 @@ def validate_server_port(port):
 		return False
 
 
-def save_settings(settings):
-	"""
-	Saves given settings to the settings file.
-	"""
-	file_content = ""
-
-	for key in settings.keys():
-		file_content += key + "=" + str(settings[key]) + "\n"
-
-	set_settings_file_content(file_content)
-
-
 def decode_boolean_setting(setting):
 	"""
 	Decodes a boolean string of "True" or "False"
 	to the correct boolean value.
+	Enhanced to handle multiple formats.
 	"""
-	return str(setting) == "True"
+	return str(setting).lower() in ("true", "1", "yes", "on")
 
 
 def encode_boolean_setting(value):
 	"""
-	Encodes a boolean to the string "True" or "False".
+	Encodes a boolean to the string "true" or "false".
 	"""
-	return "True" if value else "False"
+	return "true" if value else "false"
 
 
 def validate_pixels(pixels):
@@ -464,3 +530,25 @@ def validate_separator(separator):
 	if separator == config.NEWLINE_CONSTANT:
 		return True
 	return len(separator.strip()) > 0
+
+
+def debug_settings():
+	"""Debug function to print current settings"""
+	print("\n=== Settings Debug ===")
+	try:
+		settings = load_settings()
+		print("Current settings:")
+		for key, value in settings.items():
+			print(f"  {key}: {value}")
+		
+		print(f"\nSettings file location: {settings_path}")
+		print(f"Settings file exists: {os.path.exists(settings_path)}")
+		
+		if os.path.exists(settings_path):
+			with open(settings_path, 'r') as f:
+				content = f.read()
+			print(f"\nRaw file content:\n{content}")
+		
+	except Exception as e:
+		print(f"Error in debug_settings: {e}")
+	print("=== End Settings Debug ===\n")
