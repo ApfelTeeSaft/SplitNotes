@@ -6,6 +6,7 @@ import sys
 
 import config
 
+
 # Cross-platform path handling
 if getattr(sys, 'frozen', False):
 	# Running as compiled executable
@@ -173,6 +174,7 @@ def edit_settings(root_wnd, apply_method):
 	y = (settings_wnd.winfo_screenheight() // 2) - (config.SETTINGS_WINDOW['HEIGHT'] // 2)
 	settings_wnd.geometry(f"+{x}+{y}")
 
+	# Create labels
 	font_label = tkinter.Label(settings_wnd,
 							   text=config.SETTINGS_OPTIONS["FONT"],
 							   font=config.GUI_FONT)
@@ -333,28 +335,47 @@ def edit_settings(root_wnd, apply_method):
 								text=config.SETTINGS_WINDOW["CANCEL"],
 								font=config.GUI_FONT)
 
-	# Place all components
-	font_label.place(x=15, y=15)
-	font_size_label.place(x=15, y=55)
-	text_color_label.place(x=15, y=95)
-	bg_color_label.place(x=15, y=135)
-	layout_label.place(x=15, y=175)
-	newline_label.place(x=15, y=215)
-	separator_label.place(x=15, y=240)
-	port_label.place(x=15, y=280)
-	default_port_label.place(x=15, y=305)
+	# Place all components with updated positions
+	y_offset = 15
+	font_label.place(x=15, y=y_offset)
+	y_offset += 40
+	font_size_label.place(x=15, y=y_offset)
+	y_offset += 40
+	text_color_label.place(x=15, y=y_offset)
+	y_offset += 40
+	bg_color_label.place(x=15, y=y_offset)
+	y_offset += 40
+	layout_label.place(x=15, y=y_offset)
+	y_offset += 25
+	newline_label.place(x=15, y=y_offset)
+	y_offset += 25
+	separator_label.place(x=15, y=y_offset)
+	y_offset += 40
+	port_label.place(x=15, y=y_offset)
+	y_offset += 25
+	default_port_label.place(x=15, y=y_offset)
 
-	font_dropdown.place(x=208, y=15)
-	font_size_entry.place(x=210, y=55)
-	text_color.place(x=210, y=95)
-	bg_color.place(x=210, y=135)
-	double_layout_btn.place(x=210, y=175)
-	newline_btn.place(x=210, y=215)
-	separator_entry.place(x=210, y=240)
-	port_entry.place(x=210, y=280)
+	# Place input controls
+	y_offset = 15
+	font_dropdown.place(x=208, y=y_offset)
+	y_offset += 40
+	font_size_entry.place(x=210, y=y_offset)
+	y_offset += 40
+	text_color.place(x=210, y=y_offset)
+	y_offset += 40
+	bg_color.place(x=210, y=y_offset)
+	y_offset += 40
+	double_layout_btn.place(x=210, y=y_offset)
+	y_offset += 25
+	newline_btn.place(x=210, y=y_offset)
+	y_offset += 25
+	separator_entry.place(x=210, y=y_offset)
+	y_offset += 40
+	port_entry.place(x=210, y=y_offset)
 
-	save_btn.place(x=110, y=350)
-	cancel_btn.place(x=190, y=350)
+	# Place buttons at bottom
+	save_btn.place(x=110, y=450)
+	cancel_btn.place(x=190, y=450)
 
 	# Handle window close
 	def on_closing():
